@@ -1,0 +1,142 @@
+---
+title: "Проблемы с аутлайерами"
+output: html_document
+---
+
+```{r echo = F}
+knitr::opts_chunk$set(echo = F, message = F, cache = F)
+```
+
+```{r}
+library(DEoptim)
+library(plotly)
+```
+
+
+```{r}
+cdf <- function(x, theta) {
+  theta[1]*x+theta[2]*pbeta(x, theta[3], theta[4])+(1-theta[1]-theta[2])*pbeta(x, theta[5], theta[6])}
+
+statistic <- function(theta, breaks, obs){
+  if (theta[1]+theta[2]>1) return (Inf)
+  l <- length(breaks)
+  exp <- cdf(breaks[2:l], theta)-cdf(breaks[1:(l-1)], theta)
+  return (chisq.test(obs, p = exp)$statistic)
+}
+R1 <- function(c, theta) {
+  (c*theta[1]+(1-theta[1]-theta[2])*pbeta(c, theta[5], theta[6]))/cdf(c, theta)}
+
+```
+
+```{r}
+o <- c()
+o$optim$bestmem <- round(read.csv('par_cardio_tnorm.csv', header = F)[,1], 4)
+prNull <- o$optim$bestmem[1]
+prPos <- o$optim$bestmem[2]
+aPos <- o$optim$bestmem[3]
+bPos <- o$optim$bestmem[4]
+prNeg <- 1-prNull-prPos
+aNeg <- o$optim$bestmem[5]
+bNeg <- o$optim$bestmem[6]
+```
+Из данных получены следующие оценки 
+$\pi_0 =$ `r prNull`, $\pi_+=$ `r prPos`, $\pi_-=$ `r prNeg`, $\alpha_+=$ `r aPos`, $\beta_+=$ `r bPos`, $\alpha_-=$ `r aNeg`, $\beta_-=$ `r bNeg`. 
+
+```{r}
+modeling <- function(x){
+  set.seed(x)
+  hypo <- sort(sample(c('=', '>', '<'), M, replace = T,
+                      prob = c(prNull, prPos, prNeg)))
+  pvals <- c(rbeta(sum(hypo=='<'), aNeg, bNeg), 
+             runif(sum(hypo=='=')), 
+             rbeta(sum(hypo=='>'), aPos, bPos))
+  names(pvals) <- hypo
+  
+  breaks = c(seq(0, 1/10, 1/100), seq(2/10, 1, 1/10))
+  obs <- hist(pvals, breaks = breaks, plot = F)$counts
+  
+  crit <- qchisq(0.50, length(breaks)-7)
+  
+  NP <- 10*6
+  init <- sapply(c(0.5, 0.25, 0.5, 5, 5, 0.5), function(x) rnorm(NP, x, 0.01))
+  o <- DEoptim(statistic, breaks = breaks, obs = obs, 
+             lower = c(0, 0, 0, 1, 1, 0), upper = c(1, 1, 1, 10, 10, 1),
+             DEoptim.control(itermax = 1000, trace = F, VTR = crit,
+                             initialpop = init))
+
+  if (sum(o$optim$bestmem[1:2]) >= alpha){
+    c <- tryCatch({
+      c <- uniroot(function(x) R1(x, o$optim$bestmem)-alpha, c(0.000001, 1))$root},
+      error = function(e) {
+        c <- 0
+        return (c)})
+  } else {c <- 1}
+  return (c(sum(pvals<=c & names(pvals) %in% c('=', '<')), sum(pvals<=c)))
+}
+```
+
+
+Генерируем 100 раз набор p-значений на их основе.
+
+```{r cache = T}
+M <- 100000
+alpha <- 0.1
+res <- t(sapply(101:200, modeling))
+k <- which.max(res[,1]/res[,2])+100
+plot_ly(x = 1:100, y = res[,1]/res[,2], type = 'scatter', mode = 'lines') %>% layout(title = 'FDR')
+```
+Очевидный аутлайер на `r 100+k` месте. P-значения в этом случае выглядели следующим образом.
+
+```{r}
+M <- 100000
+alpha <- 0.1
+set.seed(k)
+hypo <- sort(sample(c('=', '>', '<'), M, replace = T,
+                    prob = c(prNull, prPos, prNeg)))
+pvals <- c(rbeta(sum(hypo=='<'), aNeg, bNeg), 
+           runif(sum(hypo=='=')), 
+           rbeta(sum(hypo=='>'), aPos, bPos))
+names(pvals) <- hypo
+
+plot_ly(x=pvals, type = 'histogram') %>% layout(title = 'P-values')
+```
+Находим оценки по методу минимума хи-квадрат. 
+
+```{r}
+breaks = c(seq(0, 1/10, 1/100), seq(2/10, 1, 1/10))
+obs <- hist(pvals, breaks = breaks, plot = F)$counts
+
+crit <- qchisq(0.80, length(breaks)-7)
+
+NP <- 10*6
+init <- sapply(c(0.5, 0.25, 0.5, 5, 5, 0.5), function(x) rnorm(NP, x, 0.01))
+o <- DEoptim(statistic, breaks = breaks, obs = obs, 
+           lower = c(0, 0, 0, 1, 1, 0), upper = c(1, 1, 1, 10, 10, 1),
+           DEoptim.control(itermax = 500, trace = T, VTR = crit,
+                           initialpop = init))
+```
+PS во время оптимизации я использовала следующие значение в качестве начальных, это немного уменьшило кол-во аутлайеров, но их выбор надо как-то обосновать.
+$\pi_0 =0.5$, $\pi_+=0.25$, $\pi_-=0.25$, $\alpha_+=0.5$, $\beta_+=5$, $\alpha_-=5$, $\beta_-=0.5$.
+
+Полученные оценки.
+$\pi_0 =$ `r o$optim$bestmem[1]`, $\pi_+=$ `r o$optim$bestmem[2]`, $\pi_-=$ `r 1-o$optim$bestmem[1]-o$optim$bestmem[2]`, $\alpha_+=$ `r o$optim$bestmem[3]`, $\beta_+=$ `r o$optim$bestmem[4]`, $\alpha_-=$ `r o$optim$bestmem[5]`, $\beta_-=$ `r o$optim$bestmem[6]`.
+
+Видно, что вероятность $\theta=0$ маленькая, хотя моделировались p-значения с $\pi_0=$ `r prNUll`. Возможно, это и есть причина аутлайера.
+Находим ограничение на p-значение.
+```{r}
+if (sum(o$optim$bestmem[1:2]) >= alpha){
+    c <- tryCatch({
+      c <- uniroot(function(x) R1(x, o$optim$bestmem)-alpha, c(0.000001, 1))$root},
+      error = function(e) {
+        c <- 0
+        return (c)})
+  } else {c <- 1}
+fdr <- c(sum(pvals<=c & names(pvals) %in% c('=', '<')), sum(pvals<=c))
+```
+c = `r c`   
+V = `r fdr[1]`   
+R = `r fdr[2]` (по Бенджамини-Хохбергу `r sum(p.adjust(pvals, 'BH')<alpha)`)   
+V/R = `r fdr[1]/fdr[2]`   
+
+
+
