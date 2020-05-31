@@ -2,7 +2,6 @@ library(stats4) #библиотека для поиска ОМП
 
 # считываем данные
 load(url("http://statweb.stanford.edu/~ckirby/brad/LSI/datasets-and-programs/data/prostatedata.RData"))
-load(url("http://statweb.stanford.edu/~ckirby/brad/LSI/datasets-and-programs/data/cardiodata.RData"))
 
 # указываем, какие данные будем обрабатывать
 data <- prostatedata
@@ -28,8 +27,8 @@ t.wilc <- apply(data, 1, function(x)
 
 pvals.wilc <- 2-2*pnorm(abs(t.wilc))
 
-t <- t.wilc
-pvals <- pvals.wilc
+t <- t.welch
+pvals <- pvals.welch
 
 
 # d-апостериорная процедура, основанная на p-value 
@@ -57,12 +56,12 @@ R1.pvals <- function(c, theta) {
 
 # d-риск 2-го рода
 R0.pvals <- function(c, theta) {
-  (theta[2]*(1-pbeta(c, theta[3], theta[4]))+(1-theta[1]-theta[2])*(1-pbeta(c, theta[5], theta[6])))/(1-F(c, theta))}
+  (1-theta[1])*(1-pbeta(c, theta[2], theta[3]))/(1-F(c, theta))}
 
 
 
 # ищем оценки максимльного правдоподобия 
-theta.pvals <- mle(function(p0=0.9, a1=0.5, b1=2)
+theta.pvals <- mle(function(p0=0.9, a1=0.5, b1=1)
   Lf(c(p0, a1, b1), x=pvals),
   lower = c(0, 0, 0), 
   upper = c(1, 10, 10),
@@ -102,7 +101,7 @@ modeling <- function(x, alpha=0.1){
   
   tryCatch({
     theta <- mle(function(p0=0.5, a=0.5, b=2)
-      -Lf(c(p0, a, b), x=pvals),
+      Lf(c(p0, a, b), x=pvals),
       lower = c(1e5, 1e5, 1e5), 
       upper = c(1, 10, 10),
       method = 'L-BFGS-B')@coef
@@ -170,7 +169,5 @@ if (theta.stat[1] >= alpha){
 } else {crit <- Inf}
 
 R.stat <- sum(abs(t)>crit)
-
-
 
 #======================================================
